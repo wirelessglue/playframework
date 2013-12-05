@@ -68,7 +68,10 @@ object WS {
       asyncHttpConfig.setSSLContext(sslContext.getOrElse(SSLContext.getDefault))
     }
 
-    new AsyncHttpClient(asyncHttpConfig.build())
+    val client = new AsyncHttpClient(asyncHttpConfig.build())
+    println(client.getConfig.getSSLContext.getSupportedSSLParameters.getProtocols.mkString("*** WS Supported SSL Protocols: [", ",", "]"))
+    println(client.getConfig.getSSLContext.getDefaultSSLParameters.getProtocols.mkString("*** WS Default SSL Protocols: [", ",", "]"))
+    client
   }
 
   def sslContextFor(proto: String): Option[SSLContext] = {

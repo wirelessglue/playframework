@@ -1,6 +1,6 @@
 package play.api.libs.ws
 
-import java.io.File
+import java.io.{FileInputStream, File}
 import java.util.concurrent.atomic.AtomicReference
 import scala.concurrent.{ Future, Promise }
 import play.api.libs.iteratee._
@@ -24,6 +24,9 @@ import com.ning.http.util.AsyncHttpProviderUtils
 
 import play.core.Execution.Implicits.internalContext
 import play.api.Play
+import java.security.KeyStore
+import javax.net.ssl.{TrustManagerFactory, KeyManagerFactory}
+import scala.util.Try
 
 /**
  * Asynchronous API to to query web services, as an http client.
@@ -58,11 +61,52 @@ object WS {
     playConfig.flatMap(_.getString("ws.useragent")).map { useragent =>
       asyncHttpConfig.setUserAgent(useragent)
     }
+
+    val sslContext = playConfig.flatMap(_.getString("vertex.ssl.client.protocol")).flatMap(proto => sslContextFor(proto))
+
     if (!playConfig.flatMap(_.getBoolean("ws.acceptAnyCertificate")).getOrElse(false)) {
-      asyncHttpConfig.setSSLContext(SSLContext.getDefault)
+      asyncHttpConfig.setSSLContext(sslContext.getOrElse(SSLContext.getDefault))
     }
 
     new AsyncHttpClient(asyncHttpConfig.build())
+  }
+
+  def sslContextFor(proto: String): Option[SSLContext] = {
+
+    for(
+      keyPath     <- Option(System.getProperty("javax.net.ssl.keyStore")) if keyPath != "NONE";
+      trustPath   <- Option(System.getProperty("javax.net.ssl.trustStore")) if trustPath != "NONE";
+
+      keyStore    <- Option(KeyStore.getInstance("JKS"));
+      keyMan      <- Option(KeyManagerFactory.getInstance("SunX509"));
+      keyPass     <- Option(System.getProperty("javax.net.ssl.keyStorePassword"));
+
+      trustStore  <- Option(KeyStore.getInstance("JKS"));
+      trustMan    <- Option(TrustManagerFactory.getInstance("SunX509"));
+      trustPass   <- Option(System.getProperty("javax.net.ssl.trustStorePassword")))
+    {
+      var keyIn: Option[FileInputStream] = None
+      var trustIn: Option[FileInputStream] = None
+
+      try {
+        keyIn = Some(new FileInputStream(keyPath))
+        trustIn = Some(new FileInputStream(trustPath))
+
+        keyStore.load(keyIn.get, keyPass.toCharArray)
+        keyMan.init(keyStore, keyPass.toCharArray)
+
+        trustStore.load(trustIn.get, trustPass.toCharArray)
+        trustMan.init(trustStore)
+
+        val maybeCtx = Option(SSLContext.getInstance(proto))
+        maybeCtx.map(ctx => ctx.init(keyMan.getKeyManagers, trustMan.getTrustManagers, null))
+        return maybeCtx
+      } finally {
+        Try(keyIn.map(_.close))
+        Try(trustIn.map(_.close))
+      }
+    }
+    None
   }
 
   /**

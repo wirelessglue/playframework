@@ -62,7 +62,7 @@ object WS {
       asyncHttpConfig.setUserAgent(useragent)
     }
 
-    val sslContext = playConfig.flatMap(_.getString("vertex.ssl.client.protocol")).flatMap(proto => sslContextFor(proto))
+    val sslContext = playConfig.flatMap(_.getString("ws.ssl.clientProtocol")).flatMap(proto => sslContextFor(proto))
 
     if (!playConfig.flatMap(_.getBoolean("ws.acceptAnyCertificate")).getOrElse(false)) {
       asyncHttpConfig.setSSLContext(sslContext.getOrElse(SSLContext.getDefault))

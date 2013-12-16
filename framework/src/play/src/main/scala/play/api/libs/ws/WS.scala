@@ -62,50 +62,65 @@ object WS {
       asyncHttpConfig.setUserAgent(useragent)
     }
 
-    val sslContext = playConfig.flatMap(_.getString("ws.ssl.clientProtocol")).flatMap(proto => sslContextFor(proto))
+    val sslContext = playConfig.map(_.getString("ws.ssl.clientProtocol").getOrElse("TLSv1.2")).flatMap(proto => maybeSslContextFor(proto))
 
     if (!playConfig.flatMap(_.getBoolean("ws.acceptAnyCertificate")).getOrElse(false)) {
       asyncHttpConfig.setSSLContext(sslContext.getOrElse(SSLContext.getDefault))
     }
 
     val client = new AsyncHttpClient(asyncHttpConfig.build())
-    println(client.getConfig.getSSLContext.getSupportedSSLParameters.getProtocols.mkString("*** WS Supported SSL Protocols: [", ",", "]"))
-    println(client.getConfig.getSSLContext.getDefaultSSLParameters.getProtocols.mkString("*** WS Default SSL Protocols: [", ",", "]"))
+    Option(client.getConfig.getSSLContext).orElse(Option(SSLContext.getDefault)).map { sslContext =>
+      play.Logger.info(sslContext.getSupportedSSLParameters.getProtocols.mkString("*** WS Supported SSL Protocols: [", ",", "]"))
+      play.Logger.info(sslContext.getDefaultSSLParameters.getProtocols.mkString("*** WS Default SSL Protocols: [", ",", "]"))
+    }
     client
   }
 
-  def sslContextFor(proto: String): Option[SSLContext] = {
+  def maybeSslContextFor(proto: String): Option[SSLContext] = {
+    Option(SSLContext.getInstance(proto)).map { ctx =>
+      val maybeKeyPath    = Option(System.getProperty("javax.net.ssl.keyStore")).filter(_ != "NONE")
+      val maybeTrustPath  = Option(System.getProperty("javax.net.ssl.trustStore")).filter(_ != "NONE")
+      val maybeKeyPass    = Option(System.getProperty("javax.net.ssl.keyStorePassword"))
+      val maybeTrustPass  = Option(System.getProperty("javax.net.ssl.trustStorePassword"))
+      ctx.init(
+        maybeKeyManagerFactory(maybeKeyPath, maybeKeyPass).map(_.getKeyManagers).orNull,
+        maybeTrustManagerFactory(maybeTrustPath, maybeTrustPass).map(_.getTrustManagers).orNull,
+        null
+      )
+      ctx
+    }
+  }
 
-    for(
-      keyPath     <- Option(System.getProperty("javax.net.ssl.keyStore")) if keyPath != "NONE";
-      trustPath   <- Option(System.getProperty("javax.net.ssl.trustStore")) if trustPath != "NONE";
-
-      keyStore    <- Option(KeyStore.getInstance("JKS"));
-      keyMan      <- Option(KeyManagerFactory.getInstance("SunX509"));
-      keyPass     <- Option(System.getProperty("javax.net.ssl.keyStorePassword"));
-
-      trustStore  <- Option(KeyStore.getInstance("JKS"));
-      trustMan    <- Option(TrustManagerFactory.getInstance("SunX509"));
-      trustPass   <- Option(System.getProperty("javax.net.ssl.trustStorePassword")))
-    {
-      var keyIn: Option[FileInputStream] = None
-      var trustIn: Option[FileInputStream] = None
-
+  def maybeKeyManagerFactory(maybePath: Option[String], maybePassword: Option[String]): Option[KeyManagerFactory] = {
+    var keyIn: Option[FileInputStream] = None
+    for(  path      <- maybePath;
+          password  <- maybePassword;
+          keyStore  <- Option(KeyStore.getInstance("JKS"));
+          keyMan    <- Option(KeyManagerFactory.getInstance("SunX509"))) {
       try {
-        keyIn = Some(new FileInputStream(keyPath))
-        trustIn = Some(new FileInputStream(trustPath))
-
-        keyStore.load(keyIn.get, keyPass.toCharArray)
-        keyMan.init(keyStore, keyPass.toCharArray)
-
-        trustStore.load(trustIn.get, trustPass.toCharArray)
-        trustMan.init(trustStore)
-
-        val maybeCtx = Option(SSLContext.getInstance(proto))
-        maybeCtx.map(ctx => ctx.init(keyMan.getKeyManagers, trustMan.getTrustManagers, null))
-        return maybeCtx
+        keyIn = Some(new FileInputStream(path))
+        keyStore.load(keyIn.get, password.toCharArray)
+        keyMan.init(keyStore, password.toCharArray)
+        Some(keyMan)
       } finally {
         Try(keyIn.map(_.close))
+      }
+    }
+    None
+  }
+
+  def maybeTrustManagerFactory(maybePath: Option[String], maybePassword: Option[String]): Option[TrustManagerFactory] = {
+    var trustIn: Option[FileInputStream] = None
+    for( path       <- maybePath;
+         password   <- maybePassword;
+         trustStore <- Option(KeyStore.getInstance("JKS"));
+         trustMan   <- Option(TrustManagerFactory.getInstance("SunX509"))) {
+      try {
+        trustIn = Some(new FileInputStream(path))
+        trustStore.load(trustIn.get, password.toCharArray)
+        trustMan.init(trustStore)
+        Some(trustMan)
+      } finally {
         Try(trustIn.map(_.close))
       }
     }

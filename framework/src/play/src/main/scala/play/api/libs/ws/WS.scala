@@ -1,6 +1,6 @@
 package play.api.libs.ws
 
-import java.io.File
+import java.io.{FileInputStream, File}
 import java.util.concurrent.atomic.AtomicReference
 import scala.concurrent.{ Future, Promise }
 import play.api.libs.iteratee._
@@ -21,6 +21,8 @@ import com.ning.http.client.{
 import collection.immutable.TreeMap
 import play.core.utils.CaseInsensitiveOrdered
 import com.ning.http.util.AsyncHttpProviderUtils
+import java.security.KeyStore
+import javax.net.ssl.{TrustManagerFactory, KeyManagerFactory}
 
 import play.core.Execution.Implicits.internalContext
 import play.api.Play
@@ -45,24 +47,74 @@ object WS {
 
   private val clientHolder: AtomicReference[Option[AsyncHttpClient]] = new AtomicReference(None)
 
+  //  private[play] def newClient(): AsyncHttpClient = {
+  //    val playConfig = play.api.Play.maybeApplication.map(_.configuration)
+  //    val asyncHttpConfig = new AsyncHttpClientConfig.Builder()
+  //      .setConnectionTimeoutInMs(playConfig.flatMap(_.getMilliseconds("ws.timeout.connection")).getOrElse(120000L).toInt)
+  //      .setIdleConnectionTimeoutInMs(playConfig.flatMap(_.getMilliseconds("ws.timeout.idle")).getOrElse(120000L).toInt)
+  //      .setRequestTimeoutInMs(playConfig.flatMap(_.getMilliseconds("ws.timeout.request")).getOrElse(120000L).toInt)
+  //      .setFollowRedirects(playConfig.flatMap(_.getBoolean("ws.followRedirects")).getOrElse(true))
+  //      .setUseProxyProperties(playConfig.flatMap(_.getBoolean("ws.useProxyProperties")).getOrElse(true))
+  //
+  //    playConfig.flatMap(_.getString("ws.useragent")).map {
+  //      useragent =>
+  //        asyncHttpConfig.setUserAgent(useragent)
+  //    }
+  //    if (!playConfig.flatMap(_.getBoolean("ws.acceptAnyCertificate")).getOrElse(false)) {
+  //      asyncHttpConfig.setSSLContext(SSLContext.getDefault)
+  //    }
+  //
+  //    new AsyncHttpClient(asyncHttpConfig.build())
+  //  }
+
   private[play] def newClient(): AsyncHttpClient = {
-    val playConfig = play.api.Play.maybeApplication.map(_.configuration)
-    val wsTimeout = playConfig.flatMap(_.getMilliseconds("ws.timeout"))
-    val asyncHttpConfig = new AsyncHttpClientConfig.Builder()
-      .setConnectionTimeoutInMs(playConfig.flatMap(_.getMilliseconds("ws.timeout.connection")).orElse(wsTimeout).getOrElse(120000L).toInt)
-      .setIdleConnectionTimeoutInMs(playConfig.flatMap(_.getMilliseconds("ws.timeout.idle")).orElse(wsTimeout).getOrElse(120000L).toInt)
-      .setRequestTimeoutInMs(playConfig.flatMap(_.getMilliseconds("ws.timeout.request")).getOrElse(120000L).toInt)
-      .setFollowRedirects(playConfig.flatMap(_.getBoolean("ws.followRedirects")).getOrElse(true))
-      .setUseProxyProperties(playConfig.flatMap(_.getBoolean("ws.useProxyProperties")).getOrElse(true))
-
-    playConfig.flatMap(_.getString("ws.useragent")).map { useragent =>
-      asyncHttpConfig.setUserAgent(useragent)
+    /*
+    Load keystore
+     */
+    var ksis: FileInputStream = null
+    val ks = KeyStore.getInstance("JKS")
+    val kmf = KeyManagerFactory.getInstance("SunX509")
+    val keystorePath = System.getProperty("javax.net.ssl.keyStore")
+    val keystorePassword = System.getProperty("javax.net.ssl.keyStorePassword")
+    if (keystorePath != null && !"NONE".equals(keystorePath)) {
+      ksis = new FileInputStream(keystorePath)
     }
-    if (!playConfig.flatMap(_.getBoolean("ws.acceptAnyCertificate")).getOrElse(false)) {
-      asyncHttpConfig.setSSLContext(SSLContext.getDefault)
+    try {
+      ks.load(ksis, keystorePassword.toCharArray)
+    } finally {
+      if (ksis != null) { ksis.close(); }
     }
+    kmf.init(ks, keystorePassword.toCharArray)
 
+    /*
+    Load truststore
+     */
+    var tsis: FileInputStream = null
+    val ts = KeyStore.getInstance("JKS")
+    val tmf = TrustManagerFactory.getInstance("SunX509")
+    val truststorePath = System.getProperty("javax.net.ssl.trustStore")
+    val truststorePassword = System.getProperty("javax.net.ssl.trustStorePassword")
+    if (truststorePath != null && !"NONE".equals(truststorePath)) {
+      tsis = new FileInputStream(truststorePath)
+    }
+    try {
+      ts.load(tsis, truststorePassword.toCharArray)
+    } finally {
+      if (tsis != null) { tsis.close(); }
+    }
+    tmf.init(ts)
+
+    /*
+    Create SSLContext
+     */
+    val ctx = SSLContext.getInstance("TLSv1.2")
+    ctx.init(kmf.getKeyManagers,tmf.getTrustManagers,null)
+    val asyncHttpConfig = new AsyncHttpClientConfig.Builder().setSSLContext(ctx)
     new AsyncHttpClient(asyncHttpConfig.build())
+  }
+
+  def foo() = {
+    println("This is me calling foo()")
   }
 
   /**

@@ -101,7 +101,7 @@ object WS {
         keyIn = Some(new FileInputStream(path))
         keyStore.load(keyIn.get, password.toCharArray)
         keyMan.init(keyStore, password.toCharArray)
-        Some(keyMan)
+        return Some(keyMan)
       } finally {
         Try(keyIn.map(_.close))
       }
@@ -119,7 +119,7 @@ object WS {
         trustIn = Some(new FileInputStream(path))
         trustStore.load(trustIn.get, password.toCharArray)
         trustMan.init(trustStore)
-        Some(trustMan)
+        return Some(trustMan)
       } finally {
         Try(trustIn.map(_.close))
       }
